@@ -1,0 +1,3 @@
+Options -Indexes
+RewriteEngine On
+RewriteRule ^(?!(?:index\.php$|assets/(?:style\.css|app\.js)$|$)). - [F,L]

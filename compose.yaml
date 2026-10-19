@@ -1,0 +1,26 @@
+services:
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: '1'
+      MARIADB_DATABASE: booking
+    volumes:
+      - pdkt-db:/var/lib/mysql
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+  web:
+    build:
+      context: .
+      dockerfile: tools/Dockerfile
+    ports:
+      - '127.0.0.1:8080:8000'
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pdkt-db:
