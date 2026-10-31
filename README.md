@@ -1,3 +1,15 @@
+# PDKT — Pembaikan pautan skrol
+
+**[Muat turun pembaikan skrol](https://github.com/shazrifahlaila02-bot/pdkt-booking-system/raw/refs/heads/baiki-skrol/PDKT-kemas-kini-skrol.zip)**
+
+Ekstrak ZIP dan salin folder **PDKT** ke `C:\laragon\www`, kemudian gantikan fail `assets\js\sesi-tab.js` yang sama. Buka sistem dan tekan **Ctrl + F5**.
+
+Pautan **Cara Pinjam**, **Katalog Aset** dan **Lihat Katalog** kini menatal ke sasaran tanpa memuat semula halaman. Pautan terus, carian katalog dan navigasi Kembali/Maju turut dikendalikan. Tiada import SQL diperlukan.
+
+[Panduan skrol](PDKT/PANDUAN-SKROL.md)
+
+---
+
 # PDKT — Ubah dan Padam Permohonan
 
 **[Muat turun kemas kini Ubah/Padam](https://github.com/shazrifahlaila02-bot/pdkt-booking-system/raw/refs/heads/ubah-padam-permohonan/PDKT-kemas-kini-permohonan.zip)**

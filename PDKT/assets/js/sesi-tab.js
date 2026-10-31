@@ -44,6 +44,19 @@
       state.ready = true;
     })();
   }
+  const pageKey = value => { const url = new URL(value, location.href); return url.origin + url.pathname + url.search; };
+  function scrollSection(hash, smooth = false) {
+    if (!hash || hash === '#') { window.scrollTo({top: 0, behavior: 'auto'}); return; }
+    let id;
+    try { id = decodeURIComponent(hash.slice(1)); } catch (_) { return; }
+    const target = document.getElementById(id);
+    if (!target) return;
+    const nav = document.querySelector('nav');
+    const position = nav ? getComputedStyle(nav).position : '';
+    const offset = nav && (position === 'sticky' || position === 'fixed') ? nav.getBoundingClientRect().height : 0;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - offset - 12), behavior: smooth && !reduce ? 'smooth' : 'auto'});
+  }
   async function navigate(url, options = {}) {
     if (state.busy) return;
     state.busy = true;
@@ -60,8 +73,13 @@
       state.csrf = response.headers.get('X-PDKT-CSRF') || '';
       state.expires = Number(response.headers.get('X-PDKT-Expires') || 0) * 1000;
       state.lastTouch = Date.now(); state.lastSent = state.lastTouch;
-      if (options.push !== false && response.url !== location.href) history.pushState(null, '', response.url);
-      else if (options.push === false && response.url !== location.href) history.replaceState(null, '', response.url);
+      const requested = new URL(url, location.href);
+      const destination = new URL(response.url);
+      // Kekalkan bahagian #sasaran apabila fetch tidak mengalih ke halaman lain.
+      if (pageKey(requested.href) === pageKey(destination.href)) destination.hash = requested.hash;
+      state.renderedUrl = pageKey(destination.href);
+      if (options.push !== false && destination.href !== location.href) history.pushState(null, '', destination.href);
+      else if (options.push === false && destination.href !== location.href) history.replaceState(null, '', destination.href);
       state.busy = false;
       // Respons telah disahkan di pelayan dengan token tab DAN kuki HttpOnly.
       document.open(); document.write(html); document.close();
@@ -79,7 +97,12 @@
     if (!link || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || link.hasAttribute('download') || (link.target && link.target !== '_self')) return;
     const url = new URL(link.href, location.href);
     if (url.origin !== location.origin || !url.pathname.startsWith(base + '/') || /\.(?:zip|jpg|png|pdf|css|js)$/i.test(url.pathname)) return;
-    if (url.pathname === location.pathname && url.search === location.search && url.hash) return;
+    if (pageKey(url.href) === pageKey(location.href) && link.getAttribute('href').includes('#')) {
+      event.preventDefault();
+      if (url.href !== location.href) history.pushState(null, '', url.href);
+      scrollSection(url.hash, true);
+      return;
+    }
     event.preventDefault(); navigate(url.href);
   }, binding);
   document.addEventListener('submit', event => {
@@ -94,7 +117,11 @@
       url.search = new URLSearchParams(data).toString(); navigate(url.href);
     } else { navigate(url.href, {method: 'POST', body: data}); }
   }, binding);
-  window.addEventListener('popstate', () => navigate(location.href, {push: false}), binding);
+  window.addEventListener('popstate', () => {
+    if (pageKey(location.href) === state.renderedUrl) scrollSection(location.hash);
+    else navigate(location.href, {push: false});
+  }, binding);
+  window.addEventListener('hashchange', () => scrollSection(location.hash), binding);
   for (const event of ['pointerdown', 'keydown', 'input', 'scroll']) {
     document.addEventListener(event, () => { state.lastTouch = Date.now(); }, {...binding, passive: true});
   }
@@ -123,4 +150,5 @@
     if (event.persisted) navigate(location.href, {push: false});
   }, binding);
   if (document.getElementById('status-sesi')) navigate(location.href, {push: false});
+  else if (location.hash) requestAnimationFrame(() => scrollSection(location.hash));
 })();
