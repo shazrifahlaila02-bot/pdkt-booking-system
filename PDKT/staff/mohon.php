@@ -28,8 +28,34 @@ $errors  = [];
 $old     = ['tujuan' => '', 'tempat' => '', 'pinjam' => $hariIni, 'pulang' => ''];
 $dipilih = [];
 
-// Pre-select the asset chosen from the catalog (?aset=ID)
-if (isset($_GET['aset']) && in_array((int)$_GET['aset'], $validIds, true)) {
+// Ubah hanya permohonan milik sendiri yang masih menunggu kelulusan.
+$editId = filter_var($_GET['ubah'] ?? $_POST['ubah_id'] ?? 0, FILTER_VALIDATE_INT);
+if ($editId === false || $editId < 0) { http_response_code(400); exit('<!doctype html><html lang="ms"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Permohonan tidak tersedia</title></head><body><h1>Permohonan tidak tersedia</h1><p>Nombor permohonan tidak sah.</p><a href="' . BASE_URL . '/staff/permohonan.php">Kembali ke senarai permohonan</a></body></html>'); }
+$sedangUbah = $editId > 0;
+$permohonanAsal = null;
+if ($sedangUbah) {
+    $stmt = mysqli_prepare($dbcon, "SELECT * FROM permohonan WHERE id = ? AND pemohon_id = ?");
+    mysqli_stmt_bind_param($stmt, "ii", $editId, $uid);
+    mysqli_stmt_execute($stmt);
+    $permohonanAsal = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+    mysqli_stmt_close($stmt);
+    if (!$permohonanAsal || $permohonanAsal['status'] !== 'menunggu') {
+        http_response_code(403);
+        exit('<!doctype html><html lang="ms"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Permohonan tidak tersedia</title></head><body><h1>Permohonan tidak tersedia</h1><p>Permohonan ini tidak boleh diubah. Hanya permohonan sendiri yang masih menunggu kelulusan boleh diubah.</p><a href="' . BASE_URL . '/staff/permohonan.php">Kembali ke senarai permohonan</a></body></html>');
+    }
+    $old = ['tujuan' => $permohonanAsal['tujuan'], 'tempat' => $permohonanAsal['tempat_digunakan'], 'pinjam' => $permohonanAsal['tarikh_pinjam'], 'pulang' => $permohonanAsal['tarikh_dijangka_pulang']];
+    $stmt = mysqli_prepare($dbcon, "SELECT a.id, a.keterangan, a.no_siri, a.status FROM aset a JOIN permohonan_aset pa ON pa.aset_id=a.id WHERE pa.permohonan_id=?");
+    mysqli_stmt_bind_param($stmt, "i", $editId);
+    mysqli_stmt_execute($stmt);
+    foreach (mysqli_fetch_all(mysqli_stmt_get_result($stmt), MYSQLI_ASSOC) as $item) {
+        $dipilih[] = (int)$item['id'];
+        if (!in_array((int)$item['id'], $validIds, true)) {
+            $item['keterangan'] .= ' (Tidak tersedia — sila ganti)';
+            $tersediaList[] = $item;
+        }
+    }
+    mysqli_stmt_close($stmt);
+} elseif (isset($_GET['aset']) && in_array((int)$_GET['aset'], $validIds, true)) {
     $dipilih = [(int)$_GET['aset']];
 }
 
@@ -40,7 +66,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $old['pulang'] = trim($_POST['pulang'] ?? '');
     $dipilih = array_values(array_unique(array_map('intval', (array)($_POST['aset'] ?? []))));
 
-    if (!hash_equals($_SESSION['csrf'], $_POST['csrf'] ?? '')) {
+    if (!is_string($_POST['csrf'] ?? null) || !hash_equals($_SESSION['csrf'], $_POST['csrf'])) {
+        http_response_code(403);
         $errors[] = 'Sesi tidak sah. Sila cuba lagi.';
     }
     if ($old['tujuan'] === '' || mb_strlen($old['tujuan']) > 255) { $errors[] = 'Sila isi tujuan (maksimum 255 aksara).'; }
@@ -88,21 +115,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             mysqli_begin_transaction($dbcon);
 
-            $tmp = 'TMP' . bin2hex(random_bytes(6));
-            $ins = mysqli_prepare($dbcon,
-                "INSERT INTO permohonan (no_permohonan, pemohon_id, tujuan, tempat_digunakan, tarikh_pinjam, tarikh_dijangka_pulang, status)
-                 VALUES (?, ?, ?, ?, ?, ?, 'menunggu')");
-            mysqli_stmt_bind_param($ins, "sissss", $tmp, $uid, $old['tujuan'], $old['tempat'], $old['pinjam'], $old['pulang']);
-            mysqli_stmt_execute($ins);
-            $pid = mysqli_insert_id($dbcon);
-            mysqli_stmt_close($ins);
+            if ($sedangUbah) {
+                // Semak semula di bawah kunci transaksi untuk mengelakkan perubahan selepas kelulusan.
+                $lock = mysqli_prepare($dbcon, "SELECT status FROM permohonan WHERE id=? AND pemohon_id=? FOR UPDATE");
+                mysqli_stmt_bind_param($lock, "ii", $editId, $uid);
+                mysqli_stmt_execute($lock);
+                $semasa = mysqli_fetch_assoc(mysqli_stmt_get_result($lock));
+                mysqli_stmt_close($lock);
+                if (!$semasa || $semasa['status'] !== 'menunggu') throw new RuntimeException('Permohonan sudah diproses dan tidak boleh diubah.');
+                $pid = $editId;
+                $noPermohonan = $permohonanAsal['no_permohonan'];
+            }
+            // Sahkan ketersediaan sekali lagi semasa menyimpan.
+            sort($dipilih);
+            foreach ($dipilih as $asetId) {
+                $lock = mysqli_prepare($dbcon, "SELECT status FROM aset WHERE id=? FOR UPDATE");
+                mysqli_stmt_bind_param($lock, "i", $asetId);
+                mysqli_stmt_execute($lock);
+                $asetSemasa = mysqli_fetch_assoc(mysqli_stmt_get_result($lock));
+                mysqli_stmt_close($lock);
+                if (!$asetSemasa || $asetSemasa['status'] !== 'tersedia') throw new RuntimeException('Aset yang dipilih tidak lagi tersedia. Sila pilih aset lain.');
+                $chk = mysqli_prepare($dbcon, "SELECT p.id FROM permohonan p JOIN permohonan_aset pa ON pa.permohonan_id=p.id WHERE pa.aset_id=? AND p.id<>? AND p.status='lulus' AND p.tarikh_pinjam<=? AND p.tarikh_dijangka_pulang>=? FOR UPDATE");
+                mysqli_stmt_bind_param($chk, "iiss", $asetId, $editId, $old['pulang'], $old['pinjam']);
+                mysqli_stmt_execute($chk);
+                $bertindih = mysqli_fetch_assoc(mysqli_stmt_get_result($chk));
+                mysqli_stmt_close($chk);
+                if ($bertindih) throw new RuntimeException('Aset sudah ditempah pada tarikh tersebut. Sila pilih aset atau tarikh lain.');
 
-            // Real application number: PDKT/2026/0001
-            $noPermohonan = sprintf('PDKT/%s/%04d', date('Y'), $pid);
-            $upd = mysqli_prepare($dbcon, "UPDATE permohonan SET no_permohonan = ? WHERE id = ?");
-            mysqli_stmt_bind_param($upd, "si", $noPermohonan, $pid);
-            mysqli_stmt_execute($upd);
-            mysqli_stmt_close($upd);
+            }
+            if ($sedangUbah) {
+                $upd = mysqli_prepare($dbcon, "UPDATE permohonan SET tujuan=?, tempat_digunakan=?, tarikh_pinjam=?, tarikh_dijangka_pulang=? WHERE id=? AND pemohon_id=? AND status='menunggu'");
+                mysqli_stmt_bind_param($upd, "ssssii", $old['tujuan'], $old['tempat'], $old['pinjam'], $old['pulang'], $pid, $uid);
+                mysqli_stmt_execute($upd);
+                mysqli_stmt_close($upd);
+                $del = mysqli_prepare($dbcon, "DELETE FROM permohonan_aset WHERE permohonan_id=?");
+                mysqli_stmt_bind_param($del, "i", $pid);
+                mysqli_stmt_execute($del);
+                mysqli_stmt_close($del);
+            } else {
+                $tmp = 'TMP' . bin2hex(random_bytes(6));
+                $ins = mysqli_prepare($dbcon, "INSERT INTO permohonan (no_permohonan, pemohon_id, tujuan, tempat_digunakan, tarikh_pinjam, tarikh_dijangka_pulang, status) VALUES (?, ?, ?, ?, ?, ?, 'menunggu')");
+                mysqli_stmt_bind_param($ins, "sissss", $tmp, $uid, $old['tujuan'], $old['tempat'], $old['pinjam'], $old['pulang']);
+                mysqli_stmt_execute($ins);
+                $pid = mysqli_insert_id($dbcon);
+                mysqli_stmt_close($ins);
+                $noPermohonan = sprintf('PDKT/%s/%04d', date('Y'), $pid);
+                $upd = mysqli_prepare($dbcon, "UPDATE permohonan SET no_permohonan=? WHERE id=?");
+                mysqli_stmt_bind_param($upd, "si", $noPermohonan, $pid);
+                mysqli_stmt_execute($upd);
+                mysqli_stmt_close($upd);
+            }
 
             $pa = mysqli_prepare($dbcon, "INSERT INTO permohonan_aset (permohonan_id, aset_id) VALUES (?, ?)");
             foreach ($dipilih as $id) {
@@ -113,14 +175,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             mysqli_commit($dbcon);
 
-            $_SESSION['flash_staff'] = 'Permohonan ' . $noPermohonan . ' berjaya dihantar dan sedang menunggu kelulusan Admin.';
+            $_SESSION['flash_staff'] = $sedangUbah ? 'Permohonan ' . $noPermohonan . ' berjaya dikemas kini dan masih menunggu kelulusan.' : 'Permohonan ' . $noPermohonan . ' berjaya dihantar dan sedang menunggu kelulusan Pentadbir.';
             $_SESSION['csrf'] = bin2hex(random_bytes(32));
             header('Location: ' . BASE_URL . '/staff/permohonan.php');
             exit;
-        } catch (mysqli_sql_exception $ex) {
+        } catch (Throwable $ex) {
             mysqli_rollback($dbcon);
             error_log('Permohonan gagal: ' . $ex->getMessage());
-            $errors[] = 'Permohonan gagal dihantar. Sila cuba lagi.';
+            $errors[] = get_class($ex) === RuntimeException::class ? $ex->getMessage() : 'Permohonan gagal disimpan. Sila cuba lagi.';
         }
     }
 }
@@ -162,15 +224,15 @@ $extraCss = <<<'CSS'
     @media (max-width:900px) { .borang { grid-template-columns:1fr; } .baris2 { grid-template-columns:1fr; } }
 CSS;
 
-$judul = 'Mohon Pinjaman';
+$judul = $sedangUbah ? 'Ubah Permohonan' : 'Mohon Pinjaman';
 $aktif = 'permohonan';
 require __DIR__ . '/../includes/staff_top.php';
 ?>
 
     <div class="kepala">
       <div>
-        <h1>Borang Permohonan Pinjaman Aset</h1>
-        <p>Berdasarkan borang KEW.PA-9. Permohonan akan disemak dan diluluskan oleh Admin.</p>
+        <h1><?= $sedangUbah ? 'Ubah Permohonan Pinjaman Aset' : 'Borang Permohonan Pinjaman Aset' ?></h1>
+        <p><?= $sedangUbah ? 'Tukar aset, tarikh atau maklumat permohonan sebelum mendapat kelulusan.' : 'Berdasarkan borang KEW.PA-9. Permohonan akan disemak oleh Pentadbir.' ?></p>
       </div>
     </div>
 
@@ -188,6 +250,7 @@ require __DIR__ . '/../includes/staff_top.php';
       </div></div>
     <?php else: ?>
     <form method="post" action="" id="borang">
+      <input type="hidden" name="ubah_id" value="<?= (int)$editId ?>">
       <input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
 
       <div class="borang">
@@ -235,8 +298,8 @@ require __DIR__ . '/../includes/staff_top.php';
       </div>
 
       <div class="hantar">
-        <a href="<?= BASE_URL ?>/staff/katalog.php">Batal</a>
-        <button type="submit">Hantar Permohonan</button>
+        <a href="<?= BASE_URL ?>/staff/permohonan.php">Batal</a>
+        <button type="submit"><?= $sedangUbah ? 'Simpan Perubahan' : 'Hantar Permohonan' ?></button>
       </div>
     </form>
 

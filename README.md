@@ -1,3 +1,15 @@
+# PDKT — Ubah dan Padam Permohonan
+
+**[Muat turun kemas kini Ubah/Padam](https://github.com/shazrifahlaila02-bot/pdkt-booking-system/raw/refs/heads/ubah-padam-permohonan/PDKT-kemas-kini-permohonan.zip)**
+
+Sandarkan folder PDKT, kemudian salin kandungan folder PDKT dalam ZIP ke `C:\laragon\www\PDKT` dan gantikan fail yang sama. Tekan **Ctrl + F5** selepas pemasangan. Tiada import SQL diperlukan; fail tetapan pangkalan data dan sesi tidak diganti.
+
+Butang **Ubah** dan **Padam** ditambah pada permohonan sendiri yang masih **Menunggu**. Ubah membolehkan pertukaran aset, tujuan, tempat serta tarikh sambil mengekalkan nombor permohonan. Padam memerlukan pengesahan pada halaman berasingan. Akses ke permohonan pengguna lain serta perubahan selepas kelulusan ditolak oleh pelayan.
+
+[Panduan penggunaan](PDKT/PANDUAN-UBAH-PADAM.md)
+
+---
+
 # PDKT — Sesi berasingan setiap tab
 
 Kemas kini ini berdasarkan ZIP PDKT yang dimuat naik dan mengekalkan paparan asalnya.

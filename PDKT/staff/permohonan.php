@@ -3,6 +3,8 @@ require_once __DIR__ . '/../includes/auth.php';
 require_role(['staff']);
 require_once __DIR__ . '/../dbconnect.php';
 
+if (empty($_SESSION['csrf'])) { $_SESSION['csrf'] = bin2hex(random_bytes(32)); }
+
 $uid = (int)$_SESSION['user_id'];
 $flash = $_SESSION['flash_staff'] ?? '';
 unset($_SESSION['flash_staff']);
@@ -11,7 +13,7 @@ $status = $_GET['status'] ?? '';
 if (!in_array($status, ['menunggu', 'lulus', 'tidak_lulus', 'dipulangkan'], true)) { $status = ''; }
 
 // ---- My requests ----
-$sql = "SELECT p.no_permohonan, p.tujuan, p.tempat_digunakan, p.tarikh_pinjam, p.tarikh_dijangka_pulang, p.status,
+$sql = "SELECT p.id, p.no_permohonan, p.tujuan, p.tempat_digunakan, p.tarikh_pinjam, p.tarikh_dijangka_pulang, p.status,
                GROUP_CONCAT(a.keterangan SEPARATOR ', ') AS aset
         FROM permohonan p
         LEFT JOIN permohonan_aset pa ON pa.permohonan_id = p.id
@@ -47,6 +49,10 @@ $extraCss = <<<'CSS'
     .btn-baru2:hover { background:var(--biru-gelap); }
     .panel.tanpa-anim { animation:none; }
     .berjaya { background:#e6f4ea; color:#1e6b34; border-left:4px solid #3a9d5d; padding:12px 14px; border-radius:8px; font-size:14px; margin-bottom:16px; }
+    .tindakan-permohonan { display:flex; gap:8px; }
+    .tindakan-permohonan a { display:inline-block; padding:7px 12px; border-radius:7px; font-size:12px; font-weight:bold; }
+    .butang-ubah { background:#e9f1ff; color:#1f4e8c; border:1px solid #c7d9f5; }
+    .butang-padam { background:#fff0f0; color:#a32929; border:1px solid #f1caca; }
 CSS;
 
 $judul = 'Permohonan Pinjaman';
@@ -85,7 +91,7 @@ require __DIR__ . '/../includes/staff_top.php';
         <div class="jadual">
           <table>
             <thead>
-              <tr><th>No. Permohonan</th><th>Aset</th><th>Tujuan</th><th>Tempat Digunakan</th><th>Tarikh Pinjam</th><th>Dijangka Pulang</th><th>Status</th></tr>
+              <tr><th>No. Permohonan</th><th>Aset</th><th>Tujuan</th><th>Tempat Digunakan</th><th>Tarikh Pinjam</th><th>Dijangka Pulang</th><th>Status</th><th>Tindakan</th></tr>
             </thead>
             <tbody>
               <?php foreach ($senarai as $r): ?>
@@ -97,6 +103,9 @@ require __DIR__ . '/../includes/staff_top.php';
                   <td><?= e(tarikh($r['tarikh_pinjam'])) ?></td>
                   <td><?= e(tarikh($r['tarikh_dijangka_pulang'])) ?></td>
                   <td><span class="badge <?= e($r['status']) ?>"><?= e($label[$r['status']] ?? $r['status']) ?></span></td>
+                  <td><?php if ($r['status'] === 'menunggu'): ?>
+                    <div class="tindakan-permohonan"><a class="butang-ubah" href="<?= BASE_URL ?>/staff/mohon.php?ubah=<?= (int)$r['id'] ?>">Ubah</a><a class="butang-padam" href="<?= BASE_URL ?>/staff/padam.php?id=<?= (int)$r['id'] ?>">Padam</a></div>
+                  <?php else: ?><small>Permohonan telah diproses</small><?php endif; ?></td>
                 </tr>
               <?php endforeach; ?>
             </tbody>
